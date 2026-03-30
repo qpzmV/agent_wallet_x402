@@ -1,0 +1,1 @@
+go build -o execution-engine/main ./execution-engine/main.go && go build -o x402-server/main ./x402-server/main.go && go build -o e2e-test ./cmd/e2e/main.go && lsof -ti :8080,8081 | xargs kill -9 || true && ./execution-engine/main & ./x402-server/main & sleep 2 && ./e2e-test

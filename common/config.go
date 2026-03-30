@@ -26,3 +26,29 @@ const (
 	SuiTestnetRPC = "https://fullnode.testnet.sui.io:443"
 	SuiBrowser    = "https://suiscan.xyz/testnet/tx/"
 )
+
+// 固定的测试用户地址 (需要充值USDT)
+const (
+	// EVM 测试用户
+	EVMUserAddr = "0x742d35Cc6634C0532925a3b8D4C9db96C4b5Da5e"
+	EVMUserPK   = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" // 示例私钥
+
+	// Solana 测试用户 (请将USDC转到这个地址)
+	SolanaUserAddr = "5yHFDH8SSHAwUKkTkzcP3vFjcjxMxWM5XtxJ4JmR4zpz"
+	SolanaUserPK   = "3i6DpMqtvDRLhKu3so5ebrWr9B7pukB1moNV6YDdKnG1S5CgMTvjG9LydnAG1mYnpd5scrP64aNWLHwmHzrzYhF8" // 88字符的有效私钥
+
+	// Sui 测试用户 (使用已有的)
+	// SuiUserAddr 和 SuiUserPK 已在上面定义
+)
+
+// USDT 合约地址
+const (
+	// Sepolia USDT (示例地址)
+	EVMUSDTContract = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+	
+	// Solana USDC (Devnet) - 正确的USDC合约地址
+	SolanaUSDTContract = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+	
+	// Sui USDT (Testnet - 示例)
+	SuiUSDTContract = "0x2::coin::Coin<0x2::sui::SUI>" // 使用SUI作为示例
+)
