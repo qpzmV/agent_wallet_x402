@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/coming-chat/go-sui/v2 v2.0.1
 	github.com/ethereum/go-ethereum v1.17.1
+	github.com/fardream/go-bcs v0.2.1
 	github.com/gagliardetto/solana-go v1.14.0
 	github.com/gin-gonic/gin v1.12.0
 	golang.org/x/crypto v0.48.0
@@ -31,7 +32,6 @@ require (
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.6 // indirect
-	github.com/fardream/go-bcs v0.2.1 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gagliardetto/binary v0.8.0 // indirect

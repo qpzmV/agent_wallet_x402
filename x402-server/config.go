@@ -35,6 +35,13 @@ var SupportedNetworks = map[string]NetworkConfig{
 		USDCContract: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", // Polygon USDC
 		Enabled:      false, // 暂时禁用
 	},
+	"sui": {
+		Name:         "Sui",
+		SponsorAddr:  common.SuiSponsorAddr,
+		RPCEndpoint:  common.SuiTestnetRPC,
+		USDCContract: common.SuiUSDTContract,
+		Enabled:      true,
+	},
 }
 
 // 获取启用的网络列表

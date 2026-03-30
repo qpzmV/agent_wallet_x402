@@ -7,13 +7,15 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"context"
 	"strings"
-
 	"sync"
 	"time"
-	"context"
 
 	"agent-wallet-gas-sponsor/common"
+	"github.com/coming-chat/go-sui/v2/client"
+	"github.com/coming-chat/go-sui/v2/lib"
+	"github.com/coming-chat/go-sui/v2/types"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gin-gonic/gin"
@@ -159,15 +161,21 @@ func x402Middleware() gin.HandlerFunc {
 		// 动态计算所需金额和gas信息
 		requiredAmount, gasInfo := calculateRequiredAmountWithGasInfo(c)
 
+		// 获取支付链，如果未指定则默认为 solana
+		paymentChain := c.GetHeader("X-Payment-Chain")
+		if paymentChain == "" {
+			paymentChain = "solana" 
+		}
+
 		// 验证支付凭证
 		var vErr error
 		if paymentProof != "" {
-			vErr = verifyPayment(paymentProof, requiredAmount)
+			vErr = verifyPayment(paymentProof, requiredAmount, paymentChain)
 			if vErr == nil {
 				c.Next()
 				return
 			}
-			log.Printf("支付验证失败: %v", vErr)
+			log.Printf("支付验证失败 (%s): %v", paymentChain, vErr)
 		}
 
 		// 构建所有网络的收款地址映射
@@ -224,7 +232,7 @@ func getSponsorAddress(network string) string {
 }
 
 // 统一的支付验证入口
-func verifyPayment(paymentProof string, expectedAmount float64) error {
+func verifyPayment(paymentProof string, expectedAmount float64, chain string) error {
 	paymentProof = strings.TrimSpace(paymentProof)
 	
 	// 简单的模拟支付 Token
@@ -238,24 +246,16 @@ func verifyPayment(paymentProof string, expectedAmount float64) error {
 		return nil
 	}
 
-	// 尝试 Solana 验证
-	solErr := verifySolanaPayment(paymentProof, expectedAmount)
-	if solErr == nil {
-		return nil
+	switch strings.ToLower(chain) {
+	case "solana":
+		return verifySolanaPayment(paymentProof, expectedAmount)
+	case "sui":
+		return verifySuiPayment(paymentProof, expectedAmount)
+	case "evm", "ethereum", "polygon":
+		return verifyEVMPayment(paymentProof, expectedAmount)
+	default:
+		return fmt.Errorf("不支持的支付链: %s", chain)
 	}
-
-	// 如果失败了，且看起来像 Solana 签名（base58 长度较长），则直接返回该错误
-	if len(paymentProof) > 40 && !strings.HasPrefix(paymentProof, "0x") {
-		return solErr
-	}
-
-	// 否则尝试 EVM 验证
-	evmErr := verifyEVMPayment(paymentProof, expectedAmount)
-	if evmErr == nil {
-		return nil
-	}
-
-	return fmt.Errorf("无法验证支付凭证. Solana: %v, EVM: %v", solErr, evmErr)
 }
 
 // EVM支付验证 (以太坊/Polygon等)
@@ -400,6 +400,55 @@ func verifySolanaPayment(sigStr string, expectedAmount float64) error {
 	usedSignatures.Store(sigStr, time.Now())
 
 	log.Printf("支付验证成功: 交易 %s", sigStr)
+	return nil
+}
+
+func verifySuiPayment(digestStr string, expectedAmount float64) error {
+	cli, err := client.Dial(common.SuiTestnetRPC)
+	if err != nil {
+		return fmt.Errorf("连接 Sui RPC 失败: %v", err)
+	}
+
+	// 添加重试逻辑，等待交易在链上确认
+	var confirmed bool
+	for i := 0; i < 15; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		digest, dErr := lib.NewBase58(digestStr)
+		if dErr != nil {
+			cancel()
+			return fmt.Errorf("无效的 Sui 交易摘要: %v", dErr)
+		}
+
+		resp, err := cli.GetTransactionBlock(
+			ctx,
+			*digest,
+			types.SuiTransactionBlockResponseOptions{
+				ShowEffects: true,
+			},
+		)
+		cancel()
+
+		if err == nil && resp != nil && resp.Effects != nil {
+			// 在 go-sui v2 中，Effects 可能是 Data.V1
+			if resp.Effects.Data.V1.Status.Status == "success" {
+				confirmed = true
+				break
+			}
+			return fmt.Errorf("Sui 交易执行失败: %s", resp.Effects.Data.V1.Status.Error)
+		}
+		
+		log.Printf("等待 Sui 交易确认 (%d/15): %s...", i+1, digestStr)
+		time.Sleep(2 * time.Second)
+	}
+
+	if !confirmed {
+		return fmt.Errorf("Sui 交易未在链上确认: %s", digestStr)
+	}
+
+	// 验证金额和接收者 (简化版：仅验证交易成功)
+	// TODO: 解析交易内容以验证转账金额和接收地址
+	
+	log.Printf("Sui 支付验证成功: 交易 %s", digestStr)
 	return nil
 }
 
