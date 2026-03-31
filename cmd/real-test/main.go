@@ -111,6 +111,10 @@ func main() {
 	// 使用支付交易hash作为支付凭证
 	paymentProof := paymentResult.TxHash
 
+	// 等待支付交易确认
+	fmt.Println("⏳ 等待支付交易确认...")
+	time.Sleep(10 * time.Second) // 等待10秒让支付交易被确认
+
 	// 执行真实的代付交易
 	fmt.Println("\n=== 步骤5: 执行用户原本的USDC转账 ===")
 	result, err := executeWithPayment(txData, userSig, paymentProof)
@@ -145,7 +149,7 @@ func main() {
 
 // 检查sponsor余额
 func checkSponsorBalance() error {
-	client := rpc.New(rpc.DevNet_RPC)
+	client := rpc.New(common.SolanaDevnetRPC) // 使用配置中的RPC
 	sponsorPubkey := solana.MustPublicKeyFromBase58(common.SolanaSponsorAddr)
 
 	balance, err := client.GetBalance(context.Background(), sponsorPubkey, rpc.CommitmentConfirmed)
@@ -165,7 +169,7 @@ func checkSponsorBalance() error {
 
 // 构造USDC转账交易 (用户有USDC但没有SOL)
 func buildUSDCTransferTransaction() (txData, userSig string, err error) {
-	client := rpc.New(rpc.DevNet_RPC)
+	client := rpc.New(common.SolanaDevnetRPC) // 使用配置中的RPC
 
 	// 获取最新的blockhash
 	recent, err := client.GetLatestBlockhash(context.Background(), rpc.CommitmentFinalized)
@@ -280,7 +284,7 @@ func buildTokenTransferData(amount uint64) []byte {
 
 // 构造用户支付gas费用的USDC转账交易
 func buildPaymentTransaction(priceUSD float64) (txData, userSig string, err error) {
-	client := rpc.New(rpc.DevNet_RPC)
+	client := rpc.New(common.SolanaDevnetRPC) // 使用配置中的RPC
 
 	// 获取最新的blockhash
 	recent, err := client.GetLatestBlockhash(context.Background(), rpc.CommitmentFinalized)
@@ -501,7 +505,7 @@ func executeWithPayment(txData, userSig, paymentProof string) (*common.ExecuteRe
 
 // 等待交易确认
 func waitForConfirmation(txHash string) error {
-	client := rpc.New(rpc.DevNet_RPC)
+	client := rpc.New(common.SolanaDevnetRPC) // 使用配置中的RPC
 	sig, err := solana.SignatureFromBase58(txHash)
 	if err != nil {
 		return fmt.Errorf("无效的交易签名: %v", err)
@@ -517,6 +521,7 @@ func waitForConfirmation(txHash string) error {
 			context.Background(),
 			sig,
 			&rpc.GetTransactionOpts{
+				Encoding:   solana.EncodingBase64,
 				Commitment: rpc.CommitmentConfirmed,
 			},
 		)
@@ -533,7 +538,7 @@ func waitForConfirmation(txHash string) error {
 
 // 检查用户余额 (确保用户没有SOL)
 func checkUserBalance() (float64, error) {
-	client := rpc.New(rpc.DevNet_RPC)
+	client := rpc.New(common.SolanaDevnetRPC) // 使用配置中的RPC
 	userPubkey := solana.MustPublicKeyFromBase58(common.SolanaUserAddr)
 
 	balance, err := client.GetBalance(context.Background(), userPubkey, rpc.CommitmentConfirmed)

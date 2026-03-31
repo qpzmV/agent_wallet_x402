@@ -459,54 +459,69 @@ func verifySolanaPayment(sigStr string, expectedAmount float64) error {
 
 	client := rpc.New(common.SolanaDevnetRPC)
 	
-	// 2. 等待交易确认并获取交易详情
+	// 2. 尝试多种方法获取交易信息
 	var txDetails *rpc.GetTransactionResult
-	var confirmed bool
 	
-	for i := 0; i < 15; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 方法1: 尝试不同的 commitment 级别
+	commitmentLevels := []rpc.CommitmentType{
+		rpc.CommitmentFinalized,
+		rpc.CommitmentConfirmed, 
+		rpc.CommitmentProcessed,
+	}
+	
+	for _, commitment := range commitmentLevels {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		
-		// 获取交易状态
-		outStatus, errStatus := client.GetSignatureStatuses(
+		txDetails, err = client.GetTransaction(
 			ctx,
-			false, // searchTransactionHistory
 			sig,
+			&rpc.GetTransactionOpts{
+				Encoding:                       solana.EncodingBase64,
+				Commitment:                     commitment,
+				MaxSupportedTransactionVersion: &[]uint64{0}[0], // 支持版本化交易
+			},
 		)
+		cancel()
 		
-		if errStatus == nil && outStatus != nil && len(outStatus.Value) > 0 && outStatus.Value[0] != nil {
-			status := outStatus.Value[0]
-			// 检查是否已确认
-			if status.ConfirmationStatus == rpc.ConfirmationStatusConfirmed || 
-			   status.ConfirmationStatus == rpc.ConfirmationStatusFinalized {
-				
-				// 获取完整的交易详情
-				txDetails, err = client.GetTransaction(
-					ctx,
-					sig,
-					&rpc.GetTransactionOpts{
-						Encoding:   solana.EncodingJSON,
-						Commitment: rpc.CommitmentConfirmed,
-					},
-				)
-				cancel()
-				
-				if err == nil && txDetails != nil {
-					confirmed = true
-					break
-				}
-			} else {
-				log.Printf("交易 %s 状态: %s (等待 Confirmed... %d/15)", sigStr, status.ConfirmationStatus, i+1)
-			}
-		} else if errStatus != nil {
-			log.Printf("GetSignatureStatuses 报错 (%d/15): %v", i+1, errStatus)
+		if err == nil && txDetails != nil {
+			log.Printf("✅ 使用 %s commitment 成功获取交易", commitment)
+			break
 		}
 		
-		cancel()
-		time.Sleep(2 * time.Second)
+		log.Printf("尝试 %s commitment 失败: %v", commitment, err)
 	}
-
-	if !confirmed || txDetails == nil {
-		return fmt.Errorf("该支付交易未在链上确认或获取详情失败 (已重试 15 次): %s", sigStr)
+	
+	// 方法2: 如果还是失败，尝试使用 GetSignatureStatuses 检查交易是否存在
+	if txDetails == nil {
+		log.Printf("尝试使用 GetSignatureStatuses 检查交易状态...")
+		
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		statusResult, statusErr := client.GetSignatureStatuses(
+			ctx,
+			true, // searchTransactionHistory - 启用历史搜索
+			sig,
+		)
+		cancel()
+		
+		if statusErr == nil && statusResult != nil && len(statusResult.Value) > 0 {
+			if statusResult.Value[0] != nil {
+				status := statusResult.Value[0]
+				log.Printf("交易状态: %+v", status)
+				
+				// 如果交易存在但获取详情失败，可能是历史交易问题
+				if status.Err != nil {
+					return fmt.Errorf("Solana交易执行失败: %v", status.Err)
+				}
+				
+				// 对于存在但无法获取详情的交易，我们暂时跳过详细验证
+				log.Printf("⚠️  交易存在但无法获取详情，可能是历史交易限制")
+				return fmt.Errorf("无法获取历史交易详情，请使用较新的交易: %s", sigStr)
+			} else {
+				return fmt.Errorf("交易不存在或已过期: %s", sigStr)
+			}
+		} else {
+			return fmt.Errorf("无法查询交易状态: %v", statusErr)
+		}
 	}
 
 	// 3. 验证交易是否成功执行
