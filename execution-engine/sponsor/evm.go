@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"time"
 
 	"agent-wallet-gas-sponsor/common"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -43,6 +44,11 @@ func EVMExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
 		if err := transferGasETH(client, req.UserAddress); err != nil {
 			return common.ExecuteResponse{}, fmt.Errorf("Gas 充值失败: %v", err)
 		}
+		
+		// 等待gas转账完成
+		fmt.Printf("等待 Gas 转账确认...\n")
+		time.Sleep(10 * time.Second) // 等待10秒让转账被挖矿
+		
 		// 再次尝试
 		err = client.SendTransaction(context.Background(), tx)
 		if err != nil {

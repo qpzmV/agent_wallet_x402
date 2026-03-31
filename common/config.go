@@ -5,7 +5,7 @@ const (
 	// EVM (Sepolia)
 	EVMSponsorPK   = "0xa4385ca0cf7fc1614e093334d8228d26c39dd65a3f6a49cd21001b6762240b22"
 	EVMSponsorAddr = "0x125a63a553f5494313565F3baa099DD73dA500Bc"
-	EVMSepoliaRPC  = "https://rpc.sepolia.org"
+	EVMSepoliaRPC  = "https://ethereum-sepolia-rpc.publicnode.com"
 	EVMBrowser     = "https://sepolia.etherscan.io/tx/"
 
 	// Solana (Devnet)
@@ -30,8 +30,8 @@ const (
 // 固定的测试用户地址 (需要充值USDT)
 const (
 	// EVM 测试用户
-	EVMUserAddr = "0x742d35Cc6634C0532925a3b8D4C9db96C4b5Da5e"
-	EVMUserPK   = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" // 示例私钥
+	EVMUserAddr = "0x84b13a5Ebb5dFBd6b9ffADababFe5b23FF50bbDa"
+	EVMUserPK   = "0xa4385ca0cf7fc1614e093334d8228d26c39dd65a3f6a49cd21001b6762240b23" // 测试私钥
 
 	// Solana 测试用户 (请将USDC转到这个地址)
 	SolanaUserAddr = "5yHFDH8SSHAwUKkTkzcP3vFjcjxMxWM5XtxJ4JmR4zpz"

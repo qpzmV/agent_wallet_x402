@@ -11,13 +11,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"math/big"
 
 	"agent-wallet-gas-sponsor/common"
 	"github.com/coming-chat/go-sui/v2/client"
 	"github.com/coming-chat/go-sui/v2/lib"
-	"github.com/coming-chat/go-sui/v2/types"
+	suitypes "github.com/coming-chat/go-sui/v2/types"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 )
 
@@ -270,14 +274,110 @@ func verifyEVMPayment(txHash string, expectedAmount float64) error {
 		return fmt.Errorf("该支付凭证已被使用 (Replay Attack)")
 	}
 
-	// TODO: 实现EVM链上验证
-	// 这里需要调用以太坊RPC验证交易
-	// 1. 验证交易存在且成功
-	// 2. 验证是USDC转账到指定地址
-	// 3. 验证金额符合要求
+	// 实现完整的EVM链上验证
+	client, err := ethclient.Dial(common.EVMSepoliaRPC)
+	if err != nil {
+		return fmt.Errorf("连接以太坊RPC失败: %v", err)
+	}
+	defer client.Close()
+
+	// 1. 验证交易存在且成功 (添加重试机制等待确认)
+	txHashObj := ethcommon.HexToHash(txHash)
 	
-	log.Printf("EVM支付验证 (占位实现): %s", txHash)
-	return fmt.Errorf("EVM支付验证暂未实现")
+	var receipt *types.Receipt
+	
+	// 重试获取交易收据，等待交易确认
+	for i := 0; i < 15; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		receipt, err = client.TransactionReceipt(ctx, txHashObj)
+		cancel()
+		
+		if err == nil {
+			break // 成功获取收据
+		}
+		
+		log.Printf("等待交易确认 (%d/15): %s", i+1, txHash)
+		time.Sleep(2 * time.Second)
+	}
+	
+	if err != nil {
+		return fmt.Errorf("获取交易收据失败: %v (已重试15次，交易可能尚未确认)", err)
+	}
+	
+	// 检查交易是否成功
+	if receipt.Status != 1 {
+		return fmt.Errorf("交易执行失败: status=%d", receipt.Status)
+	}
+
+	// 获取交易详情
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	tx, _, err := client.TransactionByHash(ctx, txHashObj)
+	if err != nil {
+		return fmt.Errorf("获取交易详情失败: %v", err)
+	}
+
+	// 2. 验证是USDC转账到指定的Sponsor地址
+	expectedTo := ethcommon.HexToAddress(common.EVMSponsorAddr)
+	
+	// 检查交易是否是发送到USDC合约
+	usdcContract := ethcommon.HexToAddress("0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238") // Sepolia USDC
+	if tx.To() == nil || *tx.To() != usdcContract {
+		return fmt.Errorf("交易不是发送到USDC合约地址")
+	}
+
+	// 3. 解析USDC转账事件，验证接收者和金额
+	transferAmount, recipient, err := parseUSDCTransferFromReceipt(receipt)
+	if err != nil {
+		return fmt.Errorf("解析USDC转账事件失败: %v", err)
+	}
+
+	// 验证接收者是否为Sponsor地址
+	if recipient != expectedTo {
+		return fmt.Errorf("USDC转账接收者不正确: 期望 %s, 实际 %s", expectedTo.Hex(), recipient.Hex())
+	}
+
+	// 4. 验证金额是否符合要求 (允许一定的误差范围)
+	actualAmountUSDC := float64(transferAmount.Int64()) / 1e6 // USDC有6位小数
+	tolerance := 0.001 // 允许0.001 USDC的误差
+	
+	if actualAmountUSDC < expectedAmount-tolerance {
+		return fmt.Errorf("支付金额不足: 期望至少 %.6f USDC, 实际 %.6f USDC", 
+			expectedAmount, actualAmountUSDC)
+	}
+
+	log.Printf("EVM支付验证成功: 交易 %s, 金额 %.6f USDC, 接收者 %s", 
+		txHash, actualAmountUSDC, recipient.Hex())
+	
+	return nil
+}
+
+// 解析USDC转账事件，提取转账金额和接收者
+func parseUSDCTransferFromReceipt(receipt *types.Receipt) (*big.Int, ethcommon.Address, error) {
+	// ERC20 Transfer事件的签名: Transfer(address indexed from, address indexed to, uint256 value)
+	transferEventSignature := ethcommon.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+	
+	for _, vLog := range receipt.Logs {
+		if len(vLog.Topics) >= 3 && vLog.Topics[0] == transferEventSignature {
+			// Topics[1] = from address (indexed)
+			// Topics[2] = to address (indexed)  
+			// Data = amount (uint256)
+			
+			toAddress := ethcommon.BytesToAddress(vLog.Topics[2].Bytes())
+			
+			// 解析金额 (从Data字段)
+			if len(vLog.Data) != 32 {
+				continue // 跳过格式不正确的日志
+			}
+			
+			amount := new(big.Int).SetBytes(vLog.Data)
+			
+			return amount, toAddress, nil
+		}
+	}
+	
+	return nil, ethcommon.Address{}, fmt.Errorf("未找到USDC Transfer事件")
 }
 
 // 根据请求内容动态计算所需金额
@@ -422,7 +522,7 @@ func verifySuiPayment(digestStr string, expectedAmount float64) error {
 		resp, err := cli.GetTransactionBlock(
 			ctx,
 			*digest,
-			types.SuiTransactionBlockResponseOptions{
+			suitypes.SuiTransactionBlockResponseOptions{
 				ShowEffects: true,
 			},
 		)
