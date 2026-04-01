@@ -91,6 +91,8 @@ github.com/ethereum/go-ethereum v1.17.1 h1:IjlQDjgxg2uL+GzPRkygGULPMLzcYWncEI7wb
 github.com/ethereum/go-ethereum v1.17.1/go.mod h1:7UWOVHL7K3b8RfVRea022btnzLCaanwHtBuH1jUCH/I=
 github.com/fardream/go-bcs v0.2.1 h1:ffW/0Jr0b2WXLNPF8AX6wWI9ETVE4+aXkv2aIXVViwE=
 github.com/fardream/go-bcs v0.2.1/go.mod h1:UsoxhIoe2GsVexX0s5NDLIChxeb/JUbjw7IWzzgF3Xk=
+github.com/fardream/go-bcs v0.9.0 h1:EXokzBIYafo/n/DhVO8mQKucTI/iIQREbapp4TK4KEY=
+github.com/fardream/go-bcs v0.9.0/go.mod h1:8xND2wUkBFUpfbxOe9iiso7jQEYeZPkn0crLfR7IRw4=
 github.com/fatih/color v1.16.0 h1:zmkK9Ngbjj+K0yRhTVONQh1p/HknKYSlNT+vZCzyokM=
 github.com/fatih/color v1.16.0/go.mod h1:fL2Sau1YI5c0pdGEVCbKQbLXB6edEj1ZgiY4NijnWvE=
 github.com/ferranbt/fastssz v0.1.4 h1:OCDB+dYDEQDvAgtAGnTSidK1Pe2tW3nFV40XyMkTeDY=

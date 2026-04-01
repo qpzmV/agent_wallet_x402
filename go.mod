@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/coming-chat/go-sui/v2 v2.0.1
 	github.com/ethereum/go-ethereum v1.17.1
-	github.com/fardream/go-bcs v0.2.1
+	github.com/fardream/go-bcs v0.9.0
 	github.com/gagliardetto/solana-go v1.14.0
 	github.com/gin-gonic/gin v1.12.0
 	golang.org/x/crypto v0.48.0
