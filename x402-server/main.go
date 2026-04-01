@@ -36,22 +36,29 @@ const (
 )
 
 func main() {
+	common.InitLogger("x402-server")
+	common.LogInfo("x402 Middleware 正在启动...")
+
 	r := gin.Default()
 
 	// 启动签名清理协程
+	common.LogInfo("启动支付签名清理协程")
 	go cleanupExpiredSignatures()
 
 	// 主要的执行端点
 	r.POST("/execute", x402Middleware(), func(c *gin.Context) {
 		// 如果通过了中间件，说明已支付或有凭证，转发给执行引擎
+		common.LogDebug("支付验证通过，转发请求到执行引擎")
 		proxyToExecutionEngine(c)
 	})
 
 	// 获取特定网络的支付信息
 	r.GET("/payment-info/:network", func(c *gin.Context) {
 		network := c.Param("network")
+		common.LogDebug("获取网络支付信息: %s", network)
 		config, exists := getNetworkConfig(network)
 		if !exists {
+			common.LogWarn("请求了不支持的网络: %s", network)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "不支持的网络: " + network,
 				"supported_networks": getEnabledNetworks(),
@@ -60,6 +67,7 @@ func main() {
 		}
 		
 		amount := 0.01 // 默认金额，实际应该根据交易计算
+		common.LogInfo("返回网络 %s 的支付信息: 接收地址=%s, 金额=%.6f", network, config.SponsorAddr, amount)
 		
 		c.JSON(http.StatusOK, gin.H{
 			"network": network,
@@ -73,8 +81,12 @@ func main() {
 
 	// 获取所有支持的网络信息
 	r.GET("/payment-info", func(c *gin.Context) {
+		common.LogDebug("获取所有支持网络的支付信息")
 		networks := make(map[string]interface{})
-		for _, networkName := range getEnabledNetworks() {
+		enabledNetworks := getEnabledNetworks()
+		common.LogInfo("当前支持的网络: %v", enabledNetworks)
+		
+		for _, networkName := range enabledNetworks {
 			config, _ := getNetworkConfig(networkName)
 			networks[networkName] = gin.H{
 				"receiver": config.SponsorAddr,
@@ -92,20 +104,25 @@ func main() {
 
 	// Gas费用估算端点
 	r.POST("/estimate-gas", func(c *gin.Context) {
+		common.LogDebug("收到 Gas 费用估算请求")
 		var req common.ExecuteRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			common.LogError("Gas 估算请求格式错误: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求格式"})
 			return
 		}
 		
+		common.LogInfo("开始估算 Gas 费用: chain=%s, user=%s", req.Chain, req.UserAddress)
 		estimate, err := estimateGasCost(req)
 		if err != nil {
+			common.LogError("Gas 估算失败: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		
 		// 添加安全边际
 		addSafetyMargin(estimate)
+		common.LogInfo("Gas 估算完成: %s, 需要支付 %.6f USDC", estimate.Description, estimate.USDCAmount)
 		
 		// 构建收款地址信息
 		receivers := make(map[string]string)
@@ -124,8 +141,9 @@ func main() {
 		})
 	})
 
-	fmt.Println("x402 Middleware 正在运行在 :8080")
+	common.LogInfo("x402 Middleware 正在运行在 :8080")
 	if err := r.Run(":8080"); err != nil {
+		common.LogError("启动服务失败: %v", err)
 		log.Fatal(err)
 	}
 }
@@ -137,16 +155,18 @@ func cleanupExpiredSignatures() {
 	
 	for range ticker.C {
 		now := time.Now()
+		var cleanedCount int
 		usedSignatures.Range(func(key, value interface{}) bool {
 			if usedTime, ok := value.(time.Time); ok {
 				// 清理24小时前的签名
 				if now.Sub(usedTime) > 24*time.Hour {
 					usedSignatures.Delete(key)
+					cleanedCount++
 				}
 			}
 			return true
 		})
-		log.Println("已清理过期的支付签名缓存")
+		common.LogInfo("已清理过期的支付签名缓存: %d 个", cleanedCount)
 	}
 }
 
@@ -157,30 +177,39 @@ func x402Middleware() gin.HandlerFunc {
 			paymentProof = c.GetHeader("X-Payment-Token")
 		}
 
+		common.LogDebug("处理支付中间件: proof=%s", paymentProof[:min(len(paymentProof), 20)]+"...")
+
 		// Demo 模式
 		if paymentProof == "demo" {
+			common.LogInfo("使用 Demo 模式，跳过支付验证")
 			c.Next()
 			return
 		}
 
 		// 动态计算所需金额和gas信息
 		requiredAmount, gasInfo := calculateRequiredAmountWithGasInfo(c)
+		common.LogInfo("计算所需支付金额: %.6f USDC (目标链: %s)", requiredAmount, gasInfo.TargetChain)
 
 		// 获取支付链，如果未指定则默认为 solana
 		paymentChain := c.GetHeader("X-Payment-Chain")
 		if paymentChain == "" {
 			paymentChain = "solana" 
 		}
+		common.LogDebug("支付链: %s", paymentChain)
 
 		// 验证支付凭证
 		var vErr error
 		if paymentProof != "" {
+			common.LogInfo("收到支付凭证，开始验证: chain=%s", paymentChain)
 			vErr = verifyPayment(paymentProof, requiredAmount, paymentChain)
 			if vErr == nil {
+				common.LogInfo("支付验证成功，允许执行")
 				c.Next()
 				return
 			}
-			log.Printf("支付验证失败 (%s): %v", paymentChain, vErr)
+			common.LogWarn("支付验证失败 (%s): %v", paymentChain, vErr)
+		} else {
+			common.LogDebug("未提供支付凭证")
 		}
 
 		// 构建所有网络的收款地址映射
@@ -190,6 +219,7 @@ func x402Middleware() gin.HandlerFunc {
 		// 确保至少有solana网络
 		if len(enabledNetworks) == 0 {
 			enabledNetworks = []string{"solana", "ethereum"}
+			common.LogWarn("未配置启用的网络，使用默认网络: %v", enabledNetworks)
 		}
 		
 		for _, network := range enabledNetworks {
@@ -208,6 +238,8 @@ func x402Middleware() gin.HandlerFunc {
 		if vErr != nil {
 			msg = fmt.Sprintf("Payment required: %v", vErr)
 		}
+
+		common.LogInfo("返回支付要求: 金额=%.6f USDC, 支持网络=%v", requiredAmount, enabledNetworks)
 
 		// 返回多链支付选项
 		c.JSON(http.StatusPaymentRequired, common.X402Response{
@@ -240,44 +272,65 @@ func getSponsorAddress(network string) string {
 func verifyPayment(paymentProof string, expectedAmount float64, chain string) error {
 	paymentProof = strings.TrimSpace(paymentProof)
 	
+	common.LogInfo("开始支付验证: chain=%s, amount=%.6f, proof=%s", chain, expectedAmount, paymentProof[:min(len(paymentProof), 20)]+"...")
+	
 	// 简单的模拟支付 Token
 	if paymentProof == "paid-123" {
+		common.LogInfo("使用模拟支付凭证")
 		return nil
 	}
 	
 	// Bootstrap支付凭证 - 用于第一笔支付交易 (我们代付用户支付gas费用的交易)
 	if paymentProof == "bootstrap" {
-		log.Printf("Bootstrap支付验证: 代付用户支付gas费用的交易")
+		common.LogInfo("Bootstrap支付验证: 代付用户支付gas费用的交易")
 		return nil
 	}
 
 	switch strings.ToLower(chain) {
 	case "solana":
+		common.LogDebug("验证 Solana 支付")
 		return verifySolanaPayment(paymentProof, expectedAmount)
 	case "sui":
+		common.LogDebug("验证 Sui 支付")
 		return verifySuiPayment(paymentProof, expectedAmount)
 	case "evm", "ethereum", "polygon":
+		common.LogDebug("验证 EVM 支付")
 		return verifyEVMPayment(paymentProof, expectedAmount)
 	default:
+		common.LogError("不支持的支付链: %s", chain)
 		return fmt.Errorf("不支持的支付链: %s", chain)
 	}
 }
 
+// min 辅助函数
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // EVM支付验证 (以太坊/Polygon等)
 func verifyEVMPayment(txHash string, expectedAmount float64) error {
+	common.LogDebug("开始 EVM 支付验证: txHash=%s, expectedAmount=%.6f", txHash, expectedAmount)
+	
 	// 检查是否为有效的EVM交易哈希格式
 	if !strings.HasPrefix(txHash, "0x") || len(txHash) != 66 {
+		common.LogError("无效的 EVM 交易哈希格式: %s", txHash)
 		return fmt.Errorf("无效的EVM交易哈希格式")
 	}
 
 	// 防止重放
 	if _, loaded := usedSignatures.LoadOrStore(txHash, time.Now()); loaded {
+		common.LogWarn("检测到重放攻击: %s", txHash)
 		return fmt.Errorf("该支付凭证已被使用 (Replay Attack)")
 	}
 
+	common.LogInfo("连接 EVM RPC: %s", common.EVMSepoliaRPC)
 	// 实现完整的EVM链上验证
 	client, err := ethclient.Dial(common.EVMSepoliaRPC)
 	if err != nil {
+		common.LogError("连接以太坊 RPC 失败: %v", err)
 		return fmt.Errorf("连接以太坊RPC失败: %v", err)
 	}
 	defer client.Close()
@@ -294,19 +347,22 @@ func verifyEVMPayment(txHash string, expectedAmount float64) error {
 		cancel()
 		
 		if err == nil {
+			common.LogInfo("成功获取交易收据 (重试 %d 次)", i+1)
 			break // 成功获取收据
 		}
 		
-		log.Printf("等待交易确认 (%d/15): %s", i+1, txHash)
+		common.LogDebug("等待交易确认 (%d/15): %s", i+1, txHash)
 		time.Sleep(2 * time.Second)
 	}
 	
 	if err != nil {
+		common.LogError("获取交易收据失败: %v (已重试15次)", err)
 		return fmt.Errorf("获取交易收据失败: %v (已重试15次，交易可能尚未确认)", err)
 	}
 	
 	// 检查交易是否成功
 	if receipt.Status != 1 {
+		common.LogError("交易执行失败: status=%d", receipt.Status)
 		return fmt.Errorf("交易执行失败: status=%d", receipt.Status)
 	}
 
@@ -316,6 +372,7 @@ func verifyEVMPayment(txHash string, expectedAmount float64) error {
 	
 	tx, _, err := client.TransactionByHash(ctx, txHashObj)
 	if err != nil {
+		common.LogError("获取交易详情失败: %v", err)
 		return fmt.Errorf("获取交易详情失败: %v", err)
 	}
 
@@ -325,17 +382,21 @@ func verifyEVMPayment(txHash string, expectedAmount float64) error {
 	// 检查交易是否是发送到USDC合约
 	usdcContract := ethcommon.HexToAddress("0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238") // Sepolia USDC
 	if tx.To() == nil || *tx.To() != usdcContract {
+		common.LogError("交易不是发送到 USDC 合约地址: 期望=%s, 实际=%s", usdcContract.Hex(), tx.To().Hex())
 		return fmt.Errorf("交易不是发送到USDC合约地址")
 	}
 
 	// 3. 解析USDC转账事件，验证接收者和金额
+	common.LogDebug("解析 USDC 转账事件")
 	transferAmount, recipient, err := parseUSDCTransferFromReceipt(receipt)
 	if err != nil {
+		common.LogError("解析 USDC 转账事件失败: %v", err)
 		return fmt.Errorf("解析USDC转账事件失败: %v", err)
 	}
 
 	// 验证接收者是否为Sponsor地址
 	if recipient != expectedTo {
+		common.LogError("USDC 转账接收者不正确: 期望=%s, 实际=%s", expectedTo.Hex(), recipient.Hex())
 		return fmt.Errorf("USDC转账接收者不正确: 期望 %s, 实际 %s", expectedTo.Hex(), recipient.Hex())
 	}
 
@@ -344,11 +405,12 @@ func verifyEVMPayment(txHash string, expectedAmount float64) error {
 	tolerance := 0.001 // 允许0.001 USDC的误差
 	
 	if actualAmountUSDC < expectedAmount-tolerance {
+		common.LogError("支付金额不足: 期望=%.6f USDC, 实际=%.6f USDC", expectedAmount, actualAmountUSDC)
 		return fmt.Errorf("支付金额不足: 期望至少 %.6f USDC, 实际 %.6f USDC", 
 			expectedAmount, actualAmountUSDC)
 	}
 
-	log.Printf("EVM支付验证成功: 交易 %s, 金额 %.6f USDC, 接收者 %s", 
+	common.LogInfo("EVM支付验证成功: 交易=%s, 金额=%.6f USDC, 接收者=%s", 
 		txHash, actualAmountUSDC, recipient.Hex())
 	
 	return nil
@@ -392,7 +454,7 @@ func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEst
 	// 读取请求体来估算gas费用
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Printf("无法读取请求体进行gas估算: %v", err)
+		common.LogError("无法读取请求体进行gas估算: %v", err)
 		return 0.01, &common.GasEstimateInfo{
 			TargetChain:    "unknown",
 			EstimatedGas:   0.01,
@@ -407,7 +469,7 @@ func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEst
 	
 	var req common.ExecuteRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		log.Printf("无法解析请求体: %v", err)
+		common.LogError("无法解析请求体: %v", err)
 		return 0.01, &common.GasEstimateInfo{
 			TargetChain:    "unknown",
 			EstimatedGas:   0.01,
@@ -417,10 +479,12 @@ func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEst
 		}
 	}
 	
+	common.LogDebug("开始估算 Gas 费用: chain=%s, user=%s", req.Chain, req.UserAddress)
+	
 	// 估算gas费用
 	estimate, err := estimateGasCost(req)
 	if err != nil {
-		log.Printf("Gas估算失败: %v", err)
+		common.LogError("Gas估算失败: %v", err)
 		return 0.01, &common.GasEstimateInfo{
 			TargetChain:    req.Chain,
 			EstimatedGas:   0.01,
@@ -441,13 +505,16 @@ func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEst
 		GasDescription: estimate.Description,
 	}
 	
-	log.Printf("Gas估算结果: %s", estimate.Description)
+	common.LogInfo("Gas估算结果: %s", estimate.Description)
 	return estimate.USDCAmount, gasInfo
 }
 
 func verifySolanaPayment(sigStr string, expectedAmount float64) error {
+	common.LogDebug("Solana支付验证开始: sig=%s, amount=%.6f", sigStr[:min(len(sigStr), 20)]+"...", expectedAmount)
+	
 	// 简单的模拟支付 Token (用于不具备真实链上环境的测试)
 	if sigStr == "paid-123" {
+		common.LogInfo("使用 Solana 模拟支付凭证")
 		return nil
 	}
 
@@ -484,16 +551,16 @@ func verifySolanaPayment(sigStr string, expectedAmount float64) error {
 		cancel()
 		
 		if err == nil && txDetails != nil {
-			log.Printf("✅ 使用 %s commitment 成功获取交易", commitment)
+			common.LogInfo("✅ 使用 %s commitment 成功获取交易", commitment)
 			break
 		}
 		
-		log.Printf("尝试 %s commitment 失败: %v", commitment, err)
+		common.LogDebug("尝试 %s commitment 失败: %v", commitment, err)
 	}
 	
 	// 方法2: 如果还是失败，尝试使用 GetSignatureStatuses 检查交易是否存在
 	if txDetails == nil {
-		log.Printf("尝试使用 GetSignatureStatuses 检查交易状态...")
+		common.LogDebug("尝试使用 GetSignatureStatuses 检查交易状态...")
 		
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		statusResult, statusErr := client.GetSignatureStatuses(
@@ -506,7 +573,7 @@ func verifySolanaPayment(sigStr string, expectedAmount float64) error {
 		if statusErr == nil && statusResult != nil && len(statusResult.Value) > 0 {
 			if statusResult.Value[0] != nil {
 				status := statusResult.Value[0]
-				log.Printf("交易状态: %+v", status)
+				common.LogDebug("交易状态: %+v", status)
 				
 				// 如果交易存在但获取详情失败，可能是历史交易问题
 				if status.Err != nil {
@@ -729,16 +796,22 @@ func parseSuiTransfer(txResp *suitypes.SuiTransactionBlockResponse, expectedReci
 }
 
 func proxyToExecutionEngine(c *gin.Context) {
+	common.LogDebug("开始转发请求到执行引擎")
+	
 	// 读取原始请求体
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
+		common.LogError("无法读取请求体: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取请求体"})
 		return
 	}
 
+	common.LogInfo("转发请求到执行引擎: %s", ExecutionEngineURL)
+	
 	// 转发请求
 	resp, err := http.Post(ExecutionEngineURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
+		common.LogError("无法连接到执行引擎: %v", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "无法连接到执行引擎"})
 		return
 	}
@@ -746,5 +819,6 @@ func proxyToExecutionEngine(c *gin.Context) {
 
 	// 将执行引擎的响应返回给用户
 	respBody, _ := io.ReadAll(resp.Body)
+	common.LogInfo("执行引擎响应: status=%d, body_size=%d bytes", resp.StatusCode, len(respBody))
 	c.Data(resp.StatusCode, "application/json", respBody)
 }
