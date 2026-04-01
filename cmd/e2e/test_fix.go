@@ -84,7 +84,6 @@ func testPaymentExecution() {
 	client := &http.Client{}
 	req, _ := http.NewRequest("POST", "http://localhost:8080/execute", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-402-Payment", "paid-123") // 使用测试支付凭证
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -92,6 +91,13 @@ func testPaymentExecution() {
 		return
 	}
 	defer resp.Body.Close()
+
+	// 应该返回402
+	if resp.StatusCode == 402 {
+		fmt.Printf("✅ 正确返回402支付要求\n")
+	} else {
+		fmt.Printf("❌ 期望402但得到: %d\n", resp.StatusCode)
+	}
 
 	// 读取原始响应
 	respBody := make([]byte, 0)

@@ -27,17 +27,5 @@ curl -s -X POST http://localhost:8080/execute \
     "user_signature": "test_sig"
   }' | jq .
 
-echo -e "\n测试支付执行..."
-curl -s -X POST http://localhost:8080/execute \
-  -H "Content-Type: application/json" \
-  -H "X-402-Payment: paid-123" \
-  -d '{
-    "chain": "solana",
-    "tx_data": "test_data",
-    "user_address": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-    "target_address": "test_target",
-    "user_signature": "test_sig"
-  }'
-
 echo -e "\n\n清理进程..."
 kill $ENGINE_PID $X402_PID 2>/dev/null || true

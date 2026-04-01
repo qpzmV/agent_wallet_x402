@@ -179,13 +179,6 @@ func x402Middleware() gin.HandlerFunc {
 
 		common.LogDebug("处理支付中间件: proof=%s", paymentProof[:min(len(paymentProof), 20)]+"...")
 
-		// Demo 模式
-		if paymentProof == "demo" {
-			common.LogInfo("使用 Demo 模式，跳过支付验证")
-			c.Next()
-			return
-		}
-
 		// 动态计算所需金额和gas信息
 		requiredAmount, gasInfo := calculateRequiredAmountWithGasInfo(c)
 		common.LogInfo("计算所需支付金额: %.6f USDC (目标链: %s)", requiredAmount, gasInfo.TargetChain)
@@ -274,11 +267,7 @@ func verifyPayment(paymentProof string, expectedAmount float64, chain string) er
 	
 	common.LogInfo("开始支付验证: chain=%s, amount=%.6f, proof=%s", chain, expectedAmount, paymentProof[:min(len(paymentProof), 20)]+"...")
 	
-	// 简单的模拟支付 Token
-	if paymentProof == "paid-123" {
-		common.LogInfo("使用模拟支付凭证")
-		return nil
-	}
+
 	
 	// Bootstrap支付凭证 - 用于第一笔支付交易 (我们代付用户支付gas费用的交易)
 	if paymentProof == "bootstrap" {
@@ -443,12 +432,6 @@ func parseUSDCTransferFromReceipt(receipt *types.Receipt) (*big.Int, ethcommon.A
 	return nil, ethcommon.Address{}, fmt.Errorf("未找到USDC Transfer事件")
 }
 
-// 根据请求内容动态计算所需金额
-func calculateRequiredAmount(c *gin.Context) float64 {
-	amount, _ := calculateRequiredAmountWithGasInfo(c)
-	return amount
-}
-
 // 计算所需金额并返回gas信息
 func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEstimateInfo) {
 	// 读取请求体来估算gas费用
@@ -512,11 +495,7 @@ func calculateRequiredAmountWithGasInfo(c *gin.Context) (float64, *common.GasEst
 func verifySolanaPayment(sigStr string, expectedAmount float64) error {
 	common.LogDebug("Solana支付验证开始: sig=%s, amount=%.6f", sigStr[:min(len(sigStr), 20)]+"...", expectedAmount)
 	
-	// 简单的模拟支付 Token (用于不具备真实链上环境的测试)
-	if sigStr == "paid-123" {
-		common.LogInfo("使用 Solana 模拟支付凭证")
-		return nil
-	}
+
 
 	// 1. 验证交易签名格式
 	sig, err := solana.SignatureFromBase58(sigStr)

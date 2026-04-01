@@ -64,20 +64,7 @@ else
     echo "❌ Solana收款地址为空"
 fi
 
-# 测试支付执行
-echo -e "\n=== 测试2: 支付执行 ==="
-exec_response=$(curl -s -X POST http://localhost:8080/execute \
-  -H "Content-Type: application/json" \
-  -H "X-402-Payment: paid-123" \
-  -d '{
-    "chain": "solana",
-    "tx_data": "dGVzdF9kYXRh",
-    "user_address": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-    "target_address": "11111111111111111111111111111112",
-    "user_signature": "test_sig"
-  }')
-
-echo "执行响应:"
+echo -e "\n测试完成!"
 echo "$exec_response"
 
 # 分析执行结果

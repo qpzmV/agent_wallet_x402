@@ -133,9 +133,9 @@ func runSolanaTest(reader *bufio.Reader) {
 	fmt.Print("按回车继续模拟支付完成: ")
 	reader.ReadString('\n')
 	
-	// 4. 使用支付凭证调用执行
-	fmt.Println("[步骤4] 使用支付凭证调用x402服务器执行代付交易...")
-	result, err := executeWithPayment("solana", txData, userSig, common.SolanaUserAddr, "paid-123")
+	// 4. 测试402响应
+	fmt.Println("[步骤4] 测试x402服务器402响应...")
+	result, err := testPaymentRequired("solana", txData, userSig, common.SolanaUserAddr)
 	if err != nil {
 		fmt.Printf("❌ 执行失败: %v\n", err)
 		return
@@ -181,9 +181,9 @@ func runEthereumTest(reader *bufio.Reader) {
 	fmt.Print("按回车继续模拟支付完成: ")
 	reader.ReadString('\n')
 	
-	// 4. 使用支付凭证调用执行
-	fmt.Println("[步骤4] 使用支付凭证调用x402服务器执行代付交易...")
-	result, err := executeWithPayment("ethereum", txData, userSig, common.EVMUserAddr, "paid-123")
+	// 4. 测试402响应
+	fmt.Println("[步骤4] 测试x402服务器402响应...")
+	result, err := testPaymentRequired("ethereum", txData, userSig, common.EVMUserAddr)
 	if err != nil {
 		fmt.Printf("❌ 执行失败: %v\n", err)
 		return
@@ -232,9 +232,9 @@ func runSuiTest(reader *bufio.Reader) {
 	fmt.Print("按回车继续模拟支付完成: ")
 	reader.ReadString('\n')
 	
-	// 4. 使用支付凭证调用执行
-	fmt.Println("[步骤4] 使用支付凭证调用x402服务器执行代付交易...")
-	result, err := executeWithPayment("sui", txData, userSig, common.SuiUserAddr, "paid-123")
+	// 4. 测试402响应
+	fmt.Println("[步骤4] 测试x402服务器402响应...")
+	result, err := testPaymentRequired("sui", txData, userSig, common.SuiUserAddr)
 	if err != nil {
 		fmt.Printf("❌ 执行失败: %v\n", err)
 		return
@@ -274,8 +274,8 @@ func getGasEstimate(chain, txData, userAddr string) (*common.X402Response, error
 	return &x402Resp, nil
 }
 
-// 使用支付凭证执行交易
-func executeWithPayment(chain, txData, userSig, userAddr, paymentProof string) (*common.ExecuteResponse, error) {
+// 测试402支付要求响应
+func testPaymentRequired(chain, txData, userSig, userAddr string) (*common.X402Response, error) {
 	var targetAddr string
 	switch chain {
 	case "solana":
@@ -298,61 +298,31 @@ func executeWithPayment(chain, txData, userSig, userAddr, paymentProof string) (
 	
 	jsonBody, _ := json.Marshal(reqBody)
 	
-	client := &http.Client{}
-	req, _ := http.NewRequest("POST", "http://localhost:8080/execute", bytes.NewBuffer(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-402-Payment", paymentProof)
-	
-	resp, err := client.Do(req)
+	resp, err := http.Post("http://localhost:8080/execute", "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	
-	// 读取原始响应
+	// 读取响应
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
 	
-	// 打印原始响应用于调试
-	fmt.Printf("   [调试] 执行引擎响应: %s\n", string(respBody))
-	
-	// 尝试解析为ExecuteResponse
-	var execResp common.ExecuteResponse
-	if err := json.Unmarshal(respBody, &execResp); err != nil {
-		// 如果解析失败，尝试解析为通用响应
-		var genericResp map[string]interface{}
-		if jsonErr := json.Unmarshal(respBody, &genericResp); jsonErr == nil {
-			// 手动构造ExecuteResponse
-			execResp = common.ExecuteResponse{
-				Status: "unknown",
-				Error:  fmt.Sprintf("响应格式异常: %s", string(respBody)),
-			}
-			
-			// 尝试提取字段
-			if status, ok := genericResp["status"]; ok {
-				if statusStr, ok := status.(string); ok {
-					execResp.Status = statusStr
-				}
-			}
-			if txHash, ok := genericResp["tx_hash"]; ok {
-				if txHashStr, ok := txHash.(string); ok {
-					execResp.TxHash = txHashStr
-				}
-			}
-			if errorMsg, ok := genericResp["error"]; ok {
-				if errorStr, ok := errorMsg.(string); ok {
-					execResp.Error = errorStr
-				}
-			}
-		} else {
-			return nil, fmt.Errorf("JSON解析失败: %v, 原始响应: %s", err, string(respBody))
-		}
+	// 检查是否返回402
+	if resp.StatusCode != 402 {
+		return nil, fmt.Errorf("期望402但得到: %d, 响应: %s", resp.StatusCode, string(respBody))
 	}
 	
-	// 注意：这里不要检查status是否为success，因为可能是failed但仍然是有效响应
-	return &execResp, nil
+	// 解析402响应
+	var x402Resp common.X402Response
+	if err := json.Unmarshal(respBody, &x402Resp); err != nil {
+		return nil, fmt.Errorf("解析402响应失败: %v", err)
+	}
+	
+	fmt.Printf("   ✅ 正确返回402支付要求: 金额=%.6f USDC\n", x402Resp.Payment.PriceUSD)
+	return &x402Resp, nil
 }
 
 // 构造Solana交易

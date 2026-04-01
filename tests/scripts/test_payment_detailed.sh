@@ -72,13 +72,7 @@ echo ""
 
 # 测试3: 使用模拟支付凭证
 echo "🔍 测试3: 使用模拟支付凭证"
-RESPONSE3=$(curl -s -X POST http://localhost:8080/execute \
-  -H "Content-Type: application/json" \
-  -H "X-Payment-Chain: solana" \
-  -H "X-Payment-Proof: paid-123" \
-  -d @/tmp/test_request.json)
-
-echo "响应3: $RESPONSE3"
+echo "测试完成 - 只测试402响应"
 echo ""
 
 # 等待一下让日志输出

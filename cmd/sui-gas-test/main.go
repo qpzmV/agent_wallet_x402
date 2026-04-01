@@ -65,7 +65,6 @@ func main() {
 		fmt.Printf("\n💡 可能的解决方案:\n")
 		fmt.Printf("   1. 确保用户地址 %s 有USDC余额\n", common.SuiUserAddr)
 		fmt.Printf("   2. 查询账户: https://suiscan.xyz/testnet/account/%s\n", common.SuiUserAddr)
-		fmt.Printf("   3. 若无真实USDC，可用 SUI 代替演示: 修改 DEMO_USE_SUI=true\n")
 		return
 	}
 	fmt.Println("✅ USDC转账交易构造成功")

@@ -41,7 +41,7 @@ func SuiExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
 	// 	return common.ExecuteResponse{}, fmt.Errorf("交易解析失败: %v", err)
 	// }
 
-	// ========== 验证 sender (暂略，Demo 版信任请求参数) ==========
+	// ========== 验证 sender (暂略，信任请求参数) ==========
 	// if txData.V1.Sender.String() != req.UserAddress {
 	// 	return common.ExecuteResponse{}, fmt.Errorf("sender 与用户地址不匹配")
 	// }

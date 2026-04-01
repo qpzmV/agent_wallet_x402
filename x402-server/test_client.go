@@ -45,9 +45,9 @@ func main() {
 	
 	testGasEstimate(suiRequest)
 	
-	// 测试4: 实际的402流程
-	fmt.Println("\n=== 测试4: 完整的402支付流程 ===")
-	testFullPaymentFlow(solanaRequest)
+	// 测试4: 402支付流程 (无支付凭证)
+	fmt.Println("\n=== 测试4: 402支付流程 ===")
+	testPaymentRequired(solanaRequest)
 }
 
 func testGasEstimate(request map[string]interface{}) {
@@ -71,41 +71,23 @@ func testGasEstimate(request map[string]interface{}) {
 	fmt.Printf("响应: %s\n", string(prettyJSON))
 }
 
-func testFullPaymentFlow(request map[string]interface{}) {
+func testPaymentRequired(request map[string]interface{}) {
 	jsonData, _ := json.Marshal(request)
 	
-	// 第一次请求 - 应该返回402
-	fmt.Println("第一次请求 (无支付凭证):")
-	resp1, err := http.Post("http://localhost:8080/execute", "application/json", bytes.NewBuffer(jsonData))
+	// 请求 - 应该返回402
+	fmt.Println("请求 (无支付凭证):")
+	resp, err := http.Post("http://localhost:8080/execute", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		fmt.Printf("请求失败: %v\n", err)
 		return
 	}
-	defer resp1.Body.Close()
+	defer resp.Body.Close()
 	
-	body1, _ := io.ReadAll(resp1.Body)
-	fmt.Printf("状态码: %d\n", resp1.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("状态码: %d\n", resp.StatusCode)
 	
-	var result1 map[string]interface{}
-	json.Unmarshal(body1, &result1)
-	prettyJSON1, _ := json.MarshalIndent(result1, "", "  ")
-	fmt.Printf("402响应: %s\n\n", string(prettyJSON1))
-	
-	// 第二次请求 - 使用demo支付凭证
-	fmt.Println("第二次请求 (demo支付凭证):")
-	client := &http.Client{}
-	req, _ := http.NewRequest("POST", "http://localhost:8080/execute", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-402-Payment", "demo")
-	
-	resp2, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("请求失败: %v\n", err)
-		return
-	}
-	defer resp2.Body.Close()
-	
-	body2, _ := io.ReadAll(resp2.Body)
-	fmt.Printf("状态码: %d\n", resp2.StatusCode)
-	fmt.Printf("响应: %s\n", string(body2))
+	var result map[string]interface{}
+	json.Unmarshal(body, &result)
+	prettyJSON, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Printf("402响应: %s\n", string(prettyJSON))
 }

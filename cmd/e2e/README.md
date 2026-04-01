@@ -49,12 +49,6 @@ cd cmd/e2e
 go run main.go
 ```
 
-### 快速演示
-```bash
-cd cmd/e2e
-go run demo.go
-```
-
 ## 测试流程
 
 ### 步骤1: 构造交易
@@ -104,7 +98,6 @@ X-402-Payment: <payment_proof>
 
 - **Solana**: Base58编码的交易签名
 - **Ethereum**: 0x开头的交易哈希
-- **Demo模式**: "demo" 或 "paid-123"
 
 ## 费用计算示例
 
@@ -126,4 +119,3 @@ SUI价格: $1.50
 1. 测试环境使用固定的私钥和地址，生产环境需要安全管理
 2. 价格数据从CoinGecko API获取，可能有延迟
 3. 支付验证目前使用模拟逻辑，生产环境需要完整的链上验证
-4. Demo模式可以跳过真实支付进行功能测试
