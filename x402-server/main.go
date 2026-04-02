@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"agent-wallet-gas-sponsor/common"
+	"agent-wallet-gas-sponsor/execution-engine/sponsor"
 	"github.com/coming-chat/go-sui/v2/client"
 	"github.com/coming-chat/go-sui/v2/lib"
 	suitypes "github.com/coming-chat/go-sui/v2/types"
@@ -31,9 +32,8 @@ var (
 	usedSignatures sync.Map
 )
 
-const (
-	ExecutionEngineURL = "http://localhost:8081/execute"
-)
+// 移除 ExecutionEngineURL 常量，因为逻辑已集成
+// const ExecutionEngineURL = "http://localhost:8081/execute"
 
 func main() {
 	common.InitLogger("x402-server")
@@ -47,9 +47,9 @@ func main() {
 
 	// 主要的执行端点
 	r.POST("/execute", x402Middleware(), func(c *gin.Context) {
-		// 如果通过了中间件，说明已支付或有凭证，转发给执行引擎
-		common.LogDebug("支付验证通过，转发请求到执行引擎")
-		proxyToExecutionEngine(c)
+		// 如果通过了中间件，说明已支付或有凭证，直接在本地执行
+		common.LogDebug("支付验证通过，开始本地执行交易任务")
+		handleExecutionInternal(c)
 	})
 
 	// 获取特定网络的支付信息
@@ -774,30 +774,44 @@ func parseSuiTransfer(txResp *suitypes.SuiTransactionBlockResponse, expectedReci
 	return transferAmount, recipient, nil
 }
 
-func proxyToExecutionEngine(c *gin.Context) {
-	common.LogDebug("开始转发请求到执行引擎")
-	
-	// 读取原始请求体
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		common.LogError("无法读取请求体: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取请求体"})
+// handleExecutionInternal 在本地进程内执行代付任务，不再需要 HTTP 转发
+func handleExecutionInternal(c *gin.Context) {
+	var req common.ExecuteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.LogError("请求格式错误: %v", err)
+		c.JSON(http.StatusBadRequest, common.ExecuteResponse{Status: "failed", Error: "无效格式请求"})
 		return
 	}
 
-	common.LogInfo("转发请求到执行引擎: %s", ExecutionEngineURL)
-	
-	// 转发请求
-	resp, err := http.Post(ExecutionEngineURL, "application/json", bytes.NewBuffer(body))
-	if err != nil {
-		common.LogError("无法连接到执行引擎: %v", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "无法连接到执行引擎"})
+	common.LogInfo("收到执行请求: chain=%s, user=%s, target=%s", req.Chain, req.UserAddress, req.TargetAddress)
+	common.LogDebug("交易数据长度: %d bytes", len(req.TxData))
+
+	var resp common.ExecuteResponse
+	var err error
+
+	// 直接调用 sponsor 包的逻辑
+	switch req.Chain {
+	case "evm", "ethereum":
+		common.LogDebug("执行 EVM 交易")
+		resp, err = sponsor.EVMExecute(req)
+	case "solana":
+		common.LogDebug("执行 Solana 交易")
+		resp, err = sponsor.SolanaExecute(req)
+	case "sui":
+		common.LogDebug("执行 Sui 交易")
+		resp, err = sponsor.SuiExecute(req)
+	default:
+		common.LogError("不支持的区块链: %s", req.Chain)
+		c.JSON(http.StatusBadRequest, common.ExecuteResponse{Status: "failed", Error: "不支持的区块链: " + req.Chain})
 		return
 	}
-	defer resp.Body.Close()
 
-	// 将执行引擎的响应返回给用户
-	respBody, _ := io.ReadAll(resp.Body)
-	common.LogInfo("执行引擎响应: status=%d, body_size=%d bytes", resp.StatusCode, len(respBody))
-	c.Data(resp.StatusCode, "application/json", respBody)
+	if err != nil {
+		common.LogError("执行交易失败: %v", err)
+		c.JSON(http.StatusInternalServerError, common.ExecuteResponse{Status: "failed", Error: err.Error()})
+		return
+	}
+
+	common.LogInfo("交易执行成功: %s", resp.TxHash)
+	c.JSON(http.StatusOK, resp)
 }

@@ -5,20 +5,16 @@
 ## 架构
 
 - **Agent**: 调用接口。
-- **x402-server (端口 8080)**: 支付层。如果请求未携带支付 Token，则返回 402 和付款地址。
-- **execution-engine (端口 8081)**: 执行层。负责 Gas 代付（Sponsor）和链上交易提交。
+- **x402-server (端口 8080)**: 统一支付与执行层。处理 `402 Payment Required` 协议逻辑，验证支付凭证，并直接集成 `sponsor` 逻辑完成 Gas 代付和交易广播。
 
 ## 如何运行
 
-### 1. 启动执行引擎
+### 1. 启动统一服务
 ```bash
-go run execution-engine/main.go
+go run x402-server/*.go
 ```
 
-### 2. 启动 x402 中间件
-```bash
-go run x402-server/main.go
-```
+集成后的服务将同时监听支付验证和代付执行请求。
 
 ### 3. 配置
 在 `execution-engine/sponsor/*.go` 文件中，填写您的 Sponsor 账户私钥。
