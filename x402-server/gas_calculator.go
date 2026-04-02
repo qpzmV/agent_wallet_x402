@@ -54,20 +54,21 @@ func estimateGasCost(req common.ExecuteRequest) (*GasEstimate, error) {
 func estimateSolanaGas(req common.ExecuteRequest) (*GasEstimate, error) {
 	common.LogDebug("开始 Solana Gas 估算")
 	
-	// 基础交易费用约 0.000005 SOL
-	baseGas := 0.000005
+	// 第一笔：用户转移USDC的Gas
+	paymentGas := 0.000005
 	
-	// 根据交易复杂度调整
-	// 这里可以解析 tx_data 来更精确估算
+	// 第二笔：目标交易的Gas
+	targetBaseGas := 0.000005
 	complexityMultiplier := 1.0
 	if len(req.TxData) > 1000 {
 		complexityMultiplier = 2.0 // 复杂交易
 		common.LogDebug("检测到复杂交易，调整 Gas 估算: multiplier=%.1f", complexityMultiplier)
 	}
+	targetGas := targetBaseGas * complexityMultiplier
 	
-	estimatedSOL := baseGas * complexityMultiplier
-	common.LogDebug("Solana Gas 估算: base=%.9f SOL, multiplier=%.1f, estimated=%.9f SOL", 
-		baseGas, complexityMultiplier, estimatedSOL)
+	estimatedSOL := paymentGas + targetGas
+	common.LogDebug("Solana Gas 估算: payment=%.9f, target=%.9f, total=%.9f SOL", 
+		paymentGas, targetGas, estimatedSOL)
 	
 	// 获取SOL价格
 	common.LogDebug("获取 SOL 价格")
@@ -88,7 +89,7 @@ func estimateSolanaGas(req common.ExecuteRequest) (*GasEstimate, error) {
 		NativeToken:    "SOL",
 		TokenPriceUSD:  solPrice,
 		USDCAmount:     usdcAmount,
-		Description:    fmt.Sprintf("Solana transaction gas: %.6f SOL (~$%.4f)", estimatedSOL, usdcAmount),
+		Description:    fmt.Sprintf("Solana 双交易总Gas: %.6f SOL (含前置代付转移)", estimatedSOL),
 	}
 	
 	common.LogInfo("Solana Gas 估算完成: %s", result.Description)
@@ -99,22 +100,27 @@ func estimateSolanaGas(req common.ExecuteRequest) (*GasEstimate, error) {
 func estimateEVMGas(req common.ExecuteRequest) (*GasEstimate, error) {
 	common.LogDebug("开始 EVM Gas 估算")
 	
-	// 基础gas limit: 21000 (简单转账)
-	baseGasLimit := 21000.0
+	// 第一笔：用户转移USDC付Gas费的交易 (ERC20 Transfer)
+	paymentGasLimit := 65000.0
+	
+	// 第二笔：目标交易的Gas
+	targetGasLimit := 21000.0 // 简单转账
 	
 	// 根据交易类型调整
 	if req.TargetAddress != "" && len(req.TxData) > 0 {
-		baseGasLimit = 100000.0 // 合约调用
-		common.LogDebug("检测到合约调用，调整 Gas Limit: %.0f", baseGasLimit)
+		targetGasLimit = 100000.0 // 合约调用
+		common.LogDebug("检测到合约调用，调整 Target Gas Limit: %.0f", targetGasLimit)
 	}
+	
+	totalGasLimit := paymentGasLimit + targetGasLimit
 	
 	// Gas price (gwei) - 这里应该从链上获取
 	gasPriceGwei := 20.0 // 20 gwei
 	gasPriceEth := gasPriceGwei / 1e9
 	
-	estimatedETH := (baseGasLimit * gasPriceEth)
-	common.LogDebug("EVM Gas 估算: gasLimit=%.0f, gasPrice=%.1f gwei, estimated=%.9f ETH", 
-		baseGasLimit, gasPriceGwei, estimatedETH)
+	estimatedETH := (totalGasLimit * gasPriceEth)
+	common.LogDebug("EVM Gas 估算: totalGasLimit=%.0f(%.0f+%.0f), gasPrice=%.1f gwei, estimated=%.9f ETH", 
+		totalGasLimit, paymentGasLimit, targetGasLimit, gasPriceGwei, estimatedETH)
 	
 	// 获取ETH价格
 	common.LogDebug("获取 ETH 价格")
@@ -134,7 +140,7 @@ func estimateEVMGas(req common.ExecuteRequest) (*GasEstimate, error) {
 		NativeToken:    "ETH",
 		TokenPriceUSD:  ethPrice,
 		USDCAmount:     usdcAmount,
-		Description:    fmt.Sprintf("Ethereum transaction gas: %.6f ETH (~$%.4f)", estimatedETH, usdcAmount),
+		Description:    fmt.Sprintf("EVM 双交易总Gas: %.6f ETH (含收款)", estimatedETH),
 	}
 	
 	common.LogInfo("EVM Gas 估算完成: %s", result.Description)
@@ -143,13 +149,17 @@ func estimateEVMGas(req common.ExecuteRequest) (*GasEstimate, error) {
 
 // Sui gas估算
 func estimateSuiGas(req common.ExecuteRequest) (*GasEstimate, error) {
-	// Sui的gas费用通常很低
-	baseGas := 0.001 // 0.001 SUI
+	// 第一笔：用户向Sponsor发送USDC的交易
+	paymentGas := 0.001
 	
+	// 第二笔：目标交易的Gas
+	targetGas := 0.001 
 	// 根据交易复杂度调整
 	if len(req.TxData) > 500 {
-		baseGas = 0.003 // 复杂交易
+		targetGas = 0.003 // 复杂交易
 	}
+	
+	totalGas := paymentGas + targetGas
 	
 	// 获取SUI价格
 	suiPrice, err := getTokenPrice("sui")
@@ -157,15 +167,15 @@ func estimateSuiGas(req common.ExecuteRequest) (*GasEstimate, error) {
 		suiPrice = 1.5 // 假设SUI = $1.5
 	}
 	
-	usdcAmount := baseGas * suiPrice
+	usdcAmount := totalGas * suiPrice
 	
 	return &GasEstimate{
 		Chain:          "sui",
-		EstimatedGas:   baseGas,
+		EstimatedGas:   totalGas,
 		NativeToken:    "SUI",
 		TokenPriceUSD:  suiPrice,
 		USDCAmount:     usdcAmount,
-		Description:    fmt.Sprintf("Sui transaction gas: %.6f SUI (~$%.4f)", baseGas, usdcAmount),
+		Description:    fmt.Sprintf("Sui 双交易总Gas: %.6f SUI (支付%.3f+目标%.3f)", totalGas, paymentGas, targetGas),
 	}, nil
 }
 
@@ -203,13 +213,20 @@ func getTokenPrice(tokenId string) (float64, error) {
 	return 0, fmt.Errorf("未找到代币价格: %s", tokenId)
 }
 
-// 添加一些安全边际和最小费用
+// 添加服务费综合计算逻辑
 func addSafetyMargin(estimate *GasEstimate) {
 	originalAmount := estimate.USDCAmount
 	
-	// 添加20%的安全边际
-	estimate.USDCAmount *= 1.2
-	common.LogDebug("添加 20%% 安全边际: %.6f -> %.6f USDC", originalAmount, estimate.USDCAmount)
+	// 1. 添加20%的安全边际应对币价/Gas短时拉起
+	safeAmount := originalAmount * 1.2
+	common.LogDebug("添加 20%% 价格波动安全边际: %.6f -> %.6f USDC", originalAmount, safeAmount)
+	
+	// 2. 附加 7% 的 TEE 代理服务器手续服务费
+	teeFee := safeAmount * 0.07
+	estimate.USDCAmount = safeAmount + teeFee
+	common.LogDebug("外加 7%% TEE 服务费: %.6f USDC", teeFee)
+	
+	estimate.Description += " | TEE服务费 7%"
 	
 	// 设置最小费用 (避免费用过低)
 	minFee := 0.01 // 最少0.01 USDC
