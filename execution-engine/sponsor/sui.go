@@ -2,9 +2,11 @@ package sponsor
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"golang.org/x/crypto/blake2b"
 
 	"agent-wallet-gas-sponsor/common"
 
@@ -126,6 +128,42 @@ func SuiExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
 			len(commands), maxCommands)
 	}
 
+	// 检查是否有尝试转移 GasCoin 的恶意操作
+	for _, cmd := range commands {
+		if cmd.TransferObjects != nil {
+			for _, arg := range cmd.TransferObjects.Arguments {
+				if arg.GasCoin != nil {
+					common.LogError("发现对 GasCoin 的越权 Transfer 操作")
+					return common.ExecuteResponse{}, fmt.Errorf("不允许对原生代币进行非法操作")
+				}
+			}
+		}
+		if cmd.SplitCoins != nil {
+			if cmd.SplitCoins.Argument.GasCoin != nil {
+				common.LogError("发现对 GasCoin 的越权 Split 操作")
+				return common.ExecuteResponse{}, fmt.Errorf("不允许对原生代币进行非法操作")
+			}
+		}
+	}
+
+	// 验证用户当前 SUI 余额是否为 0
+	userAddr, errAddr := sui_types.NewAddressFromHex(req.UserAddress)
+	if errAddr != nil {
+		common.LogError("用户地址格式不正确: %v", errAddr)
+		return common.ExecuteResponse{}, fmt.Errorf("用户地址格式不正确")
+	}
+	
+	balanceResp, errBal := cli.GetBalance(context.Background(), *userAddr, "0x2::sui::SUI")
+	if errBal != nil {
+		common.LogError("获取用户 SUI 余额失败: %v", errBal)
+		return common.ExecuteResponse{}, fmt.Errorf("获取用户余额失败")
+	}
+	if balanceResp.TotalBalance.String() != "0" {
+		common.LogError("用户 SUI 余额不为 0: %s", balanceResp.TotalBalance.String())
+		return common.ExecuteResponse{}, fmt.Errorf("发送者账户不为空(原生存款>0)，不允许代付")
+	}
+	common.LogInfo("用户 SUI 原生余额验证通过: 0")
+
 	common.LogInfo("交易验证通过: %d 个命令", len(commands))
 
 	// ========== 验证交易过期时间 ==========
@@ -242,13 +280,40 @@ func verifyUserSignature(userSigBase64 string, txBytes []byte, userAddress strin
 		return fmt.Errorf("用户地址格式错误: %v", err)
 	}
 
-	common.LogDebug("用户签名验证: 地址=%s, 签名长度=%d", userAddr.String(), len(userSigBytes))
+	common.LogDebug("用户签名验证开始: 期望地址=%s, 接收签名长度=%d", userAddr.String(), len(userSigBytes))
 
-	// 注意: 这里简化了签名验证逻辑
-	// 在生产环境中，应该使用完整的密码学验证
-	// 包括从签名中恢复公钥并验证是否与用户地址匹配
+	// SUI Ed25519 签名格式: 1 byte flag (0x00) + 64 bytes signature + 32 bytes pubkey = 97 bytes
+	if len(userSigBytes) != 97 {
+		return fmt.Errorf("仅支持标准的 SUI Ed25519 签名长度(97字节), 实际输入 %d 字节", len(userSigBytes))
+	}
+	if userSigBytes[0] != 0x00 {
+		return fmt.Errorf("未知的签名类型标志位: %d (仅支持 Ed25519 0x00)", userSigBytes[0])
+	}
 
-	// 基本格式验证已通过
-	common.LogDebug("用户签名基本格式验证通过")
+	sig := userSigBytes[1:65]
+	pubKeyBytes := userSigBytes[65:]
+
+	// 1. 从公钥推导并验证地址
+	hasher, _ := blake2b.New256(nil)
+	hasher.Write([]byte{0x00}) // Ed25519 Flag
+	hasher.Write(pubKeyBytes)
+	hashRes := hasher.Sum(nil)
+	
+	addrFromPubkey := "0x" + hex.EncodeToString(hashRes[:])
+	if userAddr.String() != addrFromPubkey {
+		return fmt.Errorf("公钥推导出的地址 (%s) 与请求的用户地址 (%s) 不匹配", addrFromPubkey, userAddr.String())
+	}
+
+	// 2. 验证签名有效性
+	// SUI 基于 Intent 的签名验证，Intent (0, 0, 0) == IntentScopeTransactionData
+	// Sui 的所有签名均是对 Blake2b256(Intent || Message) 的结果体进行签名
+	intentMsg := append([]byte{0, 0, 0}, txBytes...)
+	digest := blake2b.Sum256(intentMsg)
+	
+	if !ed25519.Verify(pubKeyBytes, digest[:], sig) {
+		return fmt.Errorf("Ed25519 密码学签名验证未通过")
+	}
+
+	common.LogDebug("用户签名密码学验证通过！其确实来自: %s", userAddr.String())
 	return nil
 }

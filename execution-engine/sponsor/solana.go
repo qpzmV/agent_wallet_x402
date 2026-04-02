@@ -28,6 +28,58 @@ func SolanaExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
 	common.LogInfo("解析交易成功: 账户数=%d, 指令数=%d", 
 		len(tx.Message.AccountKeys), len(tx.Message.Instructions))
 
+	// ==================== 安全校验 ====================
+	if len(tx.Message.Instructions) > 10 {
+		common.LogError("Solana 交易指令过多: %d", len(tx.Message.Instructions))
+		return common.ExecuteResponse{}, fmt.Errorf("Solana 交易指令过多，最多允许10条")
+	}
+
+	for _, inst := range tx.Message.Instructions {
+		progKey := tx.Message.AccountKeys[inst.ProgramIDIndex]
+		if progKey.Equals(solana.SystemProgramID) {
+			common.LogError("不允许包含 SystemProgram (可能包含SOL转账)指令")
+			return common.ExecuteResponse{}, fmt.Errorf("不支持携带原生代币(SOL)相关的基础转移操作")
+		}
+	}
+
+	userPubKey, err := solana.PublicKeyFromBase58(req.UserAddress)
+	if err != nil {
+		common.LogError("解析用户公钥失败: %v", err)
+		return common.ExecuteResponse{}, fmt.Errorf("无效的用户地址: %v", err)
+	}
+
+	// 余额校验
+	userBal, err := client.GetBalance(context.Background(), userPubKey, rpc.CommitmentProcessed)
+	if err != nil {
+		common.LogError("查询用户余额失败: %v", err)
+		return common.ExecuteResponse{}, fmt.Errorf("查询用户余额失败")
+	}
+	if userBal.Value > 0 {
+		common.LogError("用户账户包含原生 SOL: %d lamports", userBal.Value)
+		return common.ExecuteResponse{}, fmt.Errorf("发送者账户不为空(原生存款>0)，不允许代付")
+	}
+
+	// 验证用户在 RequiredSignatures 中，并且签名合法
+	msgBytes, _ := tx.Message.MarshalBinary()
+	userFoundAndValid := false
+	for i, key := range tx.Message.AccountKeys {
+		if i >= int(tx.Message.Header.NumRequiredSignatures) {
+			break
+		}
+		if key.Equals(userPubKey) {
+			if !tx.Signatures[i].Verify(userPubKey, msgBytes) {
+				common.LogError("用户签名校验失败")
+				return common.ExecuteResponse{}, fmt.Errorf("用户交易签名无效")
+			}
+			userFoundAndValid = true
+			break
+		}
+	}
+	if !userFoundAndValid {
+		common.LogError("交易中没有查询到合法有效的用户签名")
+		return common.ExecuteResponse{}, fmt.Errorf("此交易未经用户安全授权")
+	}
+
 	// 2. 准备 Sponsor (Fee Payer)
 	sponsorKey, err := solana.PrivateKeyFromBase58(common.SolanaSponsorPK)
 	if err != nil {

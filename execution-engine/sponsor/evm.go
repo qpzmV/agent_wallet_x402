@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"strings"
 )
 
 func EVMExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
@@ -43,6 +44,45 @@ func EVMExecute(req common.ExecuteRequest) (common.ExecuteResponse, error) {
 
 	common.LogInfo("解析交易成功: hash=%s, to=%s, value=%s ETH", 
 		tx.Hash().Hex(), tx.To().Hex(), formatWei(tx.Value()))
+
+	// ==================== 安全校验 ====================
+	chainID, err := client.NetworkID(context.Background())
+	if err != nil {
+		common.LogError("获取 ChainID 失败: %v", err)
+		return common.ExecuteResponse{}, fmt.Errorf("获取 ChainID 失败")
+	}
+
+	signer := types.LatestSignerForChainID(chainID)
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
+		common.LogError("提取交易发送者失败: %v", err)
+		return common.ExecuteResponse{}, fmt.Errorf("无法提取交易签发者: %v", err)
+	}
+
+	if !strings.EqualFold(sender.Hex(), req.UserAddress) {
+		common.LogError("交易发送者不匹配: 期望 %s, 实际 %s", req.UserAddress, sender.Hex())
+		return common.ExecuteResponse{}, fmt.Errorf("交易发送者与请求用户不符")
+	}
+
+	if tx.Value().Cmp(big.NewInt(0)) != 0 {
+		common.LogError("非法的 Value 交易: 包含原生代币 %s Wei", tx.Value().String())
+		return common.ExecuteResponse{}, fmt.Errorf("不支持携带原生代币的交易")
+	}
+
+	if tx.Gas() > 500000 {
+		common.LogError("Gas Limit 过高: %d", tx.Gas())
+		return common.ExecuteResponse{}, fmt.Errorf("Gas Limit 超过允许上限")
+	}
+
+	balance, err := client.BalanceAt(context.Background(), sender, nil)
+	if err != nil {
+		common.LogError("查询用户余额失败: %v", err)
+		return common.ExecuteResponse{}, fmt.Errorf("查询用户余额失败")
+	}
+	if balance.Cmp(big.NewInt(0)) > 0 {
+		common.LogError("发送者包含原生代币，不允许代付。余额: %s Wei", balance.String())
+		return common.ExecuteResponse{}, fmt.Errorf("发送者账户不为空(原生存款>0)，不允许代付")
+	}
 
 	// 2. 这里实现 Gas 代付的一种方式：由 Sponsor 提交交易并支付 Gas
 	// 注意：在 EVM 中，只有 Meta-Transaction 或 Account Abstraction 才能让第三方付 Gas。
